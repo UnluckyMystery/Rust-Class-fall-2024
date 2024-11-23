@@ -574,3 +574,155 @@ fn main() {
 
 
 //--------------------------------------------------------------------------------------------------------------------------
+
+use ureq;
+use serde::Deserialize;
+use std::fs::File;
+use std::io::{self, Write};
+use std::{thread, time};
+use serde_json;
+
+#[derive(Debug, Deserialize)]
+struct Bitcoin {
+    bpi: Bpi,
+}
+
+#[derive(Debug, Deserialize)]
+struct Bpi {
+    USD: Currency,
+}
+
+#[derive(Debug, Deserialize)]
+struct Currency {
+    rate_float: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Ethereum {
+    bpi: Bpi,
+}
+
+#[derive(Debug, Deserialize)]
+struct SP500 {
+    chart: Chart,
+}
+
+#[derive(Debug, Deserialize)]
+struct Chart {
+    result: Vec<ResultItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResultItem {
+    meta: Meta,
+}
+
+#[derive(Debug, Deserialize)]
+struct Meta {
+    regularMarketPrice: f64,
+}
+
+trait Pricing {
+    fn fetch_price(&self) -> Result<f64, String>;
+    fn save_to_file(&self, price: f64) -> io::Result<()>;
+}
+
+impl Pricing for Bitcoin {
+    fn fetch_price(&self) -> Result<f64, String> {
+        let response = ureq::get("https://api.coindesk.com/v1/bpi/currentprice/BTC.json")
+            .call()
+            .map_err(|e| e.to_string())?;
+        let data: Bitcoin = serde_json::from_str(&response.into_string().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;  // Deserialize JSON from the response string
+        Ok(data.bpi.USD.rate_float)
+    }
+
+    fn save_to_file(&self, price: f64) -> io::Result<()> {
+        let mut file = File::create("bitcoin_price.txt")?;
+        write!(file, "Bitcoin price: ${:.2}", price)
+    }
+}
+
+impl Pricing for Ethereum {
+    fn fetch_price(&self) -> Result<f64, String> {
+        let response = ureq::get("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+            .call()
+            .map_err(|e| e.to_string())?;
+        
+        let data: serde_json::Value = serde_json::from_str(&response.into_string().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+
+        // Extract the price of Ethereum from the response
+        let price = data["ethereum"]["usd"]
+            .as_f64()
+            .ok_or_else(|| "Failed to parse Ethereum price".to_string())?;
+
+        Ok(price)
+    }
+
+    fn save_to_file(&self, price: f64) -> io::Result<()> {
+        let mut file = File::create("ethereum_price.txt")?;
+        write!(file, "Ethereum price: ${:.2}", price)
+    }
+}
+
+impl Pricing for SP500 {
+    fn fetch_price(&self) -> Result<f64, String> {
+        let response = ureq::get("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1m&range=1d")
+            .call()
+            .map_err(|e| e.to_string())?;
+        let data: SP500 = serde_json::from_str(&response.into_string().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;  // Deserialize JSON from the response string
+        Ok(data.chart.result[0].meta.regularMarketPrice)
+    }
+
+    fn save_to_file(&self, price: f64) -> io::Result<()> {
+        let mut file = File::create("sp500_price.txt")?;
+        write!(file, "S&P 500 price: ${:.2}", price)
+    }
+}
+fn main() {
+    let bitcoin = Bitcoin { bpi: Bpi { USD: Currency { rate_float: 0.0 } } };
+    let ethereum = Ethereum { bpi: Bpi { USD: Currency { rate_float: 0.0 } } };
+    let sp500 = SP500 {
+        chart: Chart {
+            result: vec![ResultItem {
+                meta: Meta {
+                    regularMarketPrice: 0.0,
+                },
+            }],
+        },
+    };
+
+    loop {
+        // Fetch and save Bitcoin price
+        match bitcoin.fetch_price() {
+            Ok(price) => {
+                bitcoin.save_to_file(price).unwrap();
+                println!("Bitcoin: ${:.2}", price);
+            }
+            Err(e) => println!("Error fetching Bitcoin price: {}", e),
+        }
+
+        // Fetch and save Ethereum price
+        match ethereum.fetch_price() {
+            Ok(price) => {
+                ethereum.save_to_file(price).unwrap();
+                println!("Ethereum: ${:.2}", price);
+            }
+            Err(e) => println!("Error fetching Ethereum price: {}", e),
+        }
+
+        // Fetch and save S&P 500 price
+        match sp500.fetch_price() {
+            Ok(price) => {
+                sp500.save_to_file(price).unwrap();
+                println!("S&P 500: ${:.2}", price);
+            }
+            Err(e) => println!("Error fetching S&P 500 price: {}", e),
+        }
+
+        // Sleep for 10 seconds
+        thread::sleep(time::Duration::from_secs(10));
+    }
+}
