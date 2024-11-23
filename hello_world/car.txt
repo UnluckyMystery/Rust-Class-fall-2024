@@ -1,0 +1,3 @@
+Car Name: MM
+Car Year: 2005
+Struct: Person { name: "MM", year: 2005 }
